@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Redirigiendo a la app...</title>
+    <script>
+        window.onload = function () {
+          const params = new URLSearchParams(window.location.search);
+          const token = params.get("token");
+          const email = params.get("email");
+
+          const appUrl = `memorii://reset-password?token=${token}&email=${email}`;
+
+          window.location.href = appUrl;
+
+          setTimeout(() => {
+            document.body.innerHTML = `
+              <h2>No se pudo abrir la app automáticamente.</h2>
+              <p>Si tienes la app instalada, abre este enlace desde tu móvil:</p>
+              <code>${appUrl}</code>
+            `;
+          }, 3000);
+        };
+    </script>
+</head>
+<body>
+<p>Intentando abrir la app...</p>
+</body>
+</html>

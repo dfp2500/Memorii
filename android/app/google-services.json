@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "292797408774",
+    "project_id": "memorii-fe062",
+    "storage_bucket": "memorii-fe062.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:292797408774:android:c25d729d127b81a7288587",
+        "android_client_info": {
+          "package_name": "com.example.memorii"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWYUHjtVHPJ0zwZwKl5c7AZduenPzDKcI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
