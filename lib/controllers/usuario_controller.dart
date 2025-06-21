@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:mailer/mailer.dart';
 import 'package:mailer/smtp_server.dart';
 import 'dart:math';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class UsuarioController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -646,9 +647,9 @@ class UsuarioController {
 
       // Configurar el servidor SMTP
       String username = 'noreply.memorii@gmail.com';
-      String password = 'vuvp spvt tiix ootb';
+      String? password = dotenv.env['EMAIL_PASSWORD'];
 
-      final smtpServer = gmail(username, password);
+      final smtpServer = gmail(username, password!);
 
       // Crear el mensaje con deep link
       final message = Message()

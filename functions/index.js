@@ -1,117 +1,189 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
-admin.initializeApp();
+const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {onCall} = require("firebase-functions/v2/https");
+const {HttpsError} = require("firebase-functions/v2/https");
+const {initializeApp} = require("firebase-admin/app");
+const {getMessaging} = require("firebase-admin/messaging");
+const {getFirestore} = require("firebase-admin/firestore");
 
-// Función que se ejecuta diariamente a las 23:00
-exports.checkDailyProximity = functions.pubsub
-  .schedule('0 23 * * *')
-  .timeZone('Europe/Madrid')
-  .onRun(async (context) => {
-    const db = admin.firestore();
-    const messaging = admin.messaging();
-    
-    try {
-      // Obtener todos los encuentros del día actual
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      
-      const encountersSnapshot = await db.collection('encounters')
-        .where('timestamp', '>=', today)
-        .where('timestamp', '<', tomorrow)
-        .get();
-      
-      // Agrupar encuentros por pareja
-      const coupleEncounters = {};
-      
-      encountersSnapshot.forEach(doc => {
-        const data = doc.data();
-        const user1 = data.user1_id;
-        const user2 = data.user2_id;
-        const coupleKey = [user1, user2].sort().join('_');
-        
-        if (!coupleEncounters[coupleKey]) {
-          coupleEncounters[coupleKey] = [];
-        }
-        coupleEncounters[coupleKey].push(data);
-      });
-      
-      // Verificar qué parejas estuvieron juntas y enviar notificaciones
-      for (const [coupleKey, encounters] of Object.entries(coupleEncounters)) {
-        if (encounters.length > 0) {
-          const [user1Id, user2Id] = coupleKey.split('_');
-          
-          // Verificar que son pareja en la base de datos
-          const coupleQuery = await db.collection('parejas')
-            .where('id_user1', '==', parseInt(user1Id))
-            .where('id_user2', '==', parseInt(user2Id))
-            .get();
-          
-          const coupleQuery2 = await db.collection('parejas')
-            .where('id_user1', '==', parseInt(user2Id))
-            .where('id_user2', '==', parseInt(user1Id))
-            .get();
-          
-          if (!coupleQuery.empty || !coupleQuery2.empty) {
-            // Obtener tokens FCM de ambos usuarios
-            const user1Doc = await db.collection('usuarios')
-              .where('id_usuario', '==', parseInt(user1Id))
-              .get();
-            
-            const user2Doc = await db.collection('usuarios')
-              .where('id_usuario', '==', parseInt(user2Id))
-              .get();
-            
-            if (!user1Doc.empty && !user2Doc.empty) {
-              const user1Data = user1Doc.docs[0].data();
-              const user2Data = user2Doc.docs[0].data();
-              
-              // Enviar notificaciones a ambos usuarios
-              const message1 = {
-                token: user1Data.fcm_token,
-                notification: {
-                  title: '💕 Momento especial detectado',
-                  body: `Has estado con ${user2Data.nombre} hoy. ¿Quieres crear un recuerdo en el calendario?`
-                },
-                data: {
-                  type: 'proximity_detected',
-                  partner_id: user2Id,
-                  partner_name: user2Data.nombre,
-                  encounter_count: encounters.length.toString()
-                }
-              };
-              
-              const message2 = {
-                token: user2Data.fcm_token,
-                notification: {
-                  title: '💕 Momento especial detectado',
-                  body: `Has estado con ${user1Data.nombre} hoy. ¿Quieres crear un recuerdo en el calendario?`
-                },
-                data: {
-                  type: 'proximity_detected',
-                  partner_id: user1Id,
-                  partner_name: user1Data.nombre,
-                  encounter_count: encounters.length.toString()
-                }
-              };
-              
-              // Enviar notificaciones
-              if (user1Data.fcm_token) {
-                await messaging.send(message1);
-              }
-              if (user2Data.fcm_token) {
-                await messaging.send(message2);
-              }
-            }
-          }
-        }
-      }
-      
-      console.log('Proximity check completed successfully');
-      return null;
-    } catch (error) {
-      console.error('Error in proximity check:', error);
-      return null;
+initializeApp();
+
+// Función programada que se ejecuta viernes, sábado y domingo a las 23:00
+exports.enviarNotificacionProgramada = onSchedule({
+  schedule: "30 22 * * 5", // Cron: 22:12 solo viernes
+  timeZone: "Europe/Madrid", // Zona horaria de España
+}, async (event) => {
+  console.log("⏰ Ejecutando notificación programada...");
+
+  try {
+    const db = getFirestore();
+    const messaging = getMessaging();
+
+    // Obtener todos los tokens de dispositivos registrados
+    const tokensDoc = await db.collection("app_settings")
+        .doc("device_tokens").get();
+
+    if (!tokensDoc.exists) {
+      console.log("❌ No hay tokens registrados");
+      return;
     }
-  });
+
+    const tokens = tokensDoc.data().tokens || [];
+
+    if (tokens.length === 0) {
+      console.log("❌ Lista de tokens vacía");
+      return;
+    }
+
+    // Mensaje de la notificación
+    const message = {
+      notification: {
+        title: "¡Es hora de recordar! 📱",
+        body: "Captura tus momentos especiales del día",
+        icon: "default",
+      },
+      data: {
+        type: "scheduled_reminder",
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    // Enviar notificación a todos los dispositivos
+    const responses = await messaging.sendEachForMulticast({
+      tokens: tokens,
+      ...message,
+    });
+
+    console.log(`✅ Notificaciones enviadas: ` +
+      `${responses.successCount}/${tokens.length}`);
+
+    // Limpiar tokens inválidos
+    if (responses.failureCount > 0) {
+      const validTokens = [];
+      responses.responses.forEach((resp, idx) => {
+        if (resp.success) {
+          validTokens.push(tokens[idx]);
+        } else {
+          console.log(`❌ Token inválido removido: ${tokens[idx]}`);
+        }
+      });
+
+      // Actualizar la lista con solo tokens válidos
+      await db.collection("app_settings").doc("device_tokens").set({
+        tokens: validTokens,
+        lastUpdated: new Date(),
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error enviando notificaciones:", error);
+  }
+});
+
+// Función programada que se ejecuta viernes, sábado y domingo a las 23:00
+exports.enviarNotificacionNocturna = onSchedule({
+  schedule: "0 23 * * 5,6,0", // Cron: 23:00 viernes, sábado y domingo
+  timeZone: "Europe/Madrid", // Zona horaria de España
+}, async (event) => {
+  console.log("⏰ Ejecutando notificación programada...");
+
+  try {
+    const db = getFirestore();
+    const messaging = getMessaging();
+
+    // Obtener todos los tokens de dispositivos registrados
+    const tokensDoc = await db.collection("app_settings")
+        .doc("device_tokens").get();
+
+    if (!tokensDoc.exists) {
+      console.log("❌ No hay tokens registrados");
+      return;
+    }
+
+    const tokens = tokensDoc.data().tokens || [];
+
+    if (tokens.length === 0) {
+      console.log("❌ Lista de tokens vacía");
+      return;
+    }
+
+    // Mensaje de la notificación
+    const message = {
+      notification: {
+        title: "¡Es hora de recordar! 📱",
+        body: "Captura tus momentos especiales del día",
+        icon: "default",
+      },
+      data: {
+        type: "scheduled_reminder",
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    // Enviar notificación a todos los dispositivos
+    const responses = await messaging.sendEachForMulticast({
+      tokens: tokens,
+      ...message,
+    });
+
+    console.log(`✅ Notificaciones enviadas: ` +
+      `${responses.successCount}/${tokens.length}`);
+
+    // Limpiar tokens inválidos
+    if (responses.failureCount > 0) {
+      const validTokens = [];
+      responses.responses.forEach((resp, idx) => {
+        if (resp.success) {
+          validTokens.push(tokens[idx]);
+        } else {
+          console.log(`❌ Token inválido removido: ${tokens[idx]}`);
+        }
+      });
+
+      // Actualizar la lista con solo tokens válidos
+      await db.collection("app_settings").doc("device_tokens").set({
+        tokens: validTokens,
+        lastUpdated: new Date(),
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error enviando notificaciones:", error);
+  }
+});
+
+// Función para registrar tokens de dispositivos
+exports.registrarToken = onCall(async (request) => {
+  const {token} = request.data;
+
+  if (!token) {
+    throw new HttpsError("invalid-argument", "Token es requerido");
+  }
+
+  try {
+    const db = getFirestore();
+    const tokensRef = db.collection("app_settings").doc("device_tokens");
+
+    // Obtener tokens existentes
+    const doc = await tokensRef.get();
+    let tokens = [];
+
+    if (doc.exists) {
+      tokens = doc.data().tokens || [];
+    }
+
+    // Añadir token si no existe
+    if (!tokens.includes(token)) {
+      tokens.push(token);
+
+      await tokensRef.set({
+        tokens: tokens,
+        lastUpdated: new Date(),
+      });
+
+      console.log(`✅ Token registrado: ${token}`);
+    }
+
+    return {success: true, message: "Token registrado correctamente"};
+  } catch (error) {
+    console.error("❌ Error registrando token:", error);
+    throw new HttpsError("internal", "Error interno del servidor");
+  }
+});

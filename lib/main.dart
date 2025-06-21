@@ -13,32 +13,57 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:memorii/providers/usuario_provider.dart';
-// Nuevas importaciones para proximidad
-import 'servicios/ProximityService.dart';
-import 'servicios/NotificationService.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  print('Handling a background message: ${message.messageId}');
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Después de Firebase.initializeApp()
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+// Crear canal de notificaciones para Android
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'memorii_channel', // mismo ID que usas en _showLocalNotification
+    'Memorii Notifications',
+    description: 'Notificaciones de la app Memorii',
+    importance: Importance.high,
+  );
+
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Configurar notificaciones locales
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings =
+  InitializationSettings(android: initializationSettingsAndroid);
 
   SharedPreferences prefs = await SharedPreferences.getInstance();
   int? idUsuario = prefs.getInt('usuario_id');
 
   await initializeDateFormatting();
 
-  // Inicializar servicios de notificaciones primero
-  await NotificationService.initialize();
-
-  // Si hay usuario logueado, inicializar proximidad
-  if (idUsuario != null) {
-    await ProximityService.initialize(idUsuario);
-  }
-
   print('Locale: ${Intl.getCurrentLocale()}');
   print('System Locale: ${Intl.systemLocale}');
 
+  await dotenv.load();
   runApp(
     // Envolver la app con MultiProvider
     MultiProvider(
@@ -66,26 +91,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   StreamSubscription<Uri>? _linkSubscription;
   bool _appInitialized = false;
 
+  FirebaseMessaging? _messaging;
+  FlutterLocalNotificationsPlugin? _flutterLocalNotificationsPlugin;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Configurar el navigatorKey en el NotificationService
-    NotificationService.navigatorKey = MyApp.navigatorKey;
-
     _initDeepLinks();
-
-    // Configurar listener para notificaciones de proximidad
-    NotificationService.onProximityNotificationTapped = _handleProximityNotification;
+    _initFirebaseMessaging();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
-    // Detener servicio de proximidad al cerrar la app
-    ProximityService.stop();
     super.dispose();
   }
 
@@ -98,10 +119,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         print('📱 App resumed');
         // App vuelve a primer plano
         _checkForPendingLinks();
-        // Reanudar servicio de proximidad si hay usuario logueado
-        if (widget.idUsuario != null) {
-          ProximityService.resume();
-        }
         break;
       case AppLifecycleState.paused:
         print('📱 App paused');
@@ -109,8 +126,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         break;
       case AppLifecycleState.detached:
         print('📱 App detached');
-        // App se está cerrando
-        ProximityService.stop();
         break;
       case AppLifecycleState.inactive:
         print('📱 App inactive');
@@ -118,86 +133,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       case AppLifecycleState.hidden:
         print('📱 App hidden');
         break;
-    }
-  }
-
-  // Manejar notificación de proximidad tocada
-  void _handleProximityNotification(Map<String, dynamic> data) {
-    print('💕 Handling proximity notification in main: $data');
-
-    if (MyApp.navigatorKey.currentContext != null) {
-      final partnerName = data['partner_name'] ?? 'tu pareja';
-      final detectionTime = data['detection_time'] ?? 'hoy';
-
-      // Mostrar diálogo para crear entrada de calendario
-      showDialog(
-        context: MyApp.navigatorKey.currentContext!,
-        barrierDismissible: true,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
-            children: [
-              const Icon(Icons.favorite, color: Colors.pink, size: 28),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  '💕 Momento Especial',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Has pasado tiempo con $partnerName $detectionTime.',
-                style: const TextStyle(fontSize: 16),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '¿Quieres crear un recuerdo especial en vuestro calendario?',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Ahora no',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                // Navegar al calendario
-                Navigator.of(context).pushNamed('/calendar');
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.pink,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: const Text('Crear recuerdo'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      print('⚠️ No context available for proximity dialog');
     }
   }
 
@@ -249,6 +184,128 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       onError: (err) {
         print('❌ Deep link error: $err');
       },
+    );
+  }
+
+  Future<void> _initFirebaseMessaging() async {
+    _messaging = FirebaseMessaging.instance;
+    _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+    // Crear canal de notificaciones para Android
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'memorii_channel',
+      'Memorii Notifications',
+      description: 'Notificaciones de la app Memorii',
+      importance: Importance.high,
+    );
+
+    await _flutterLocalNotificationsPlugin!
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
+    // Solicitar permisos
+    NotificationSettings settings = await _messaging!.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      print('✅ Permisos de notificación concedidos');
+
+      // Obtener token del dispositivo
+      String? token = await _messaging!.getToken();
+      print('📱 FCM Token: $token');
+
+      // Registrar token en Firestore automáticamente
+      if (token != null) {
+        await _registrarTokenEnFirestore(token);
+      }
+
+      // Configurar manejo de notificaciones
+      _configureNotificationHandlers();
+    } else {
+      print('❌ Permisos de notificación denegados');
+    }
+  }
+
+  Future<void> _registrarTokenEnFirestore(String token) async {
+    try {
+      // Obtener referencia al documento de tokens
+      final firestore = FirebaseFirestore.instance;
+      final tokensRef = firestore.collection('app_settings').doc('device_tokens');
+
+      // Obtener documento actual
+      final doc = await tokensRef.get();
+      List<String> tokens = [];
+
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        if (data['tokens'] != null) {
+          tokens = List<String>.from(data['tokens']);
+        }
+      }
+
+      // Añadir token si no existe
+      if (!tokens.contains(token)) {
+        tokens.add(token);
+
+        await tokensRef.set({
+          'tokens': tokens,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+
+        print('✅ Token registrado en Firestore: $token');
+      } else {
+        print('ℹ️ Token ya existe en Firestore');
+      }
+
+    } catch (error) {
+      print('❌ Error registrando token en Firestore: $error');
+    }
+  }
+
+  void _configureNotificationHandlers() {
+    // Cuando la app está en primer plano
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('📨 Mensaje recibido en primer plano: ${message.notification?.title}');
+      _showLocalNotification(message);
+    });
+
+    // Cuando se toca una notificación y la app se abre
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('📱 App abierta desde notificación: ${message.notification?.title}');
+      // Aquí puedes navegar a una pantalla específica si necesitas
+    });
+
+    // Verificar si la app se abrió desde una notificación al iniciarla
+    FirebaseMessaging.instance.getInitialMessage().then((RemoteMessage? message) {
+      if (message != null) {
+        print('📱 App iniciada desde notificación: ${message.notification?.title}');
+        // Aquí puedes navegar a una pantalla específica si necesitas
+      }
+    });
+  }
+
+  Future<void> _showLocalNotification(RemoteMessage message) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'memorii_channel',
+      'Memorii Notifications',
+      channelDescription: 'Notificaciones de la app Memorii',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: false,
+    );
+
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await _flutterLocalNotificationsPlugin!.show(
+      0,
+      message.notification?.title ?? 'Memorii',
+      message.notification?.body ?? 'Tienes una nueva notificación',
+      platformChannelSpecifics,
     );
   }
 

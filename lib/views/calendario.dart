@@ -188,20 +188,6 @@ class _CalendarioPageState extends State<CalendarioPage> {
     });
   }
 
-  void _navegarASolicitudPareja() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SolicitudParejaPage(idUsuario: widget.idUsuario),
-      ),
-    ).then((_) async {
-      _idPareja = await _usuarioController.get_idPareja(idUsuario: widget.idUsuario);
-      setState(() {});
-      await _cargarRecuerdos(_idPareja);
-      await _cargarDatos();
-    });
-  }
-
   void _navegarAPerfil() {
     Navigator.push(
       context,
@@ -394,25 +380,6 @@ class _CalendarioPageState extends State<CalendarioPage> {
               ),
             ),
           ),
-          // Botón "Solicitudes de pareja" solo si no tiene pareja
-          if (_idPareja == -1)
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: ElevatedButton(
-                onPressed: () {
-                  _navegarASolicitudPareja();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.pinkAccent,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  padding: EdgeInsets.symmetric(vertical: 15, horizontal: 20),
-                ),
-                child: Text('Solicitudes de pareja', style: TextStyle(color: Colors.white)),
-              ),
-            ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),

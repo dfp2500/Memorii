@@ -1,9 +1,13 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:memorii/controllers/usuario_controller.dart';
+import 'package:memorii/controllers/lista_compra_controller.dart';
 import 'perfil.dart';
 import 'calendario.dart';
 import 'vacaciones.dart';
-import 'package:memorii/servicios/NotificationService.dart';
+import 'solicitud_pareja.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'fitness.dart';
 
 class InicioPage extends StatefulWidget {
   final int idUsuario;
@@ -16,6 +20,7 @@ class InicioPage extends StatefulWidget {
 
 class _InicioPageState extends State<InicioPage> {
   final UsuarioController _usuarioController = UsuarioController();
+  final ListaCompraController _listaCompraController = ListaCompraController();
   String? _fotoPerfilUrl;
   int _idPareja = -1;
 
@@ -28,6 +33,9 @@ class _InicioPageState extends State<InicioPage> {
   Future<void> _cargarDatos() async {
     int idPareja = await _usuarioController.get_idPareja(idUsuario: widget.idUsuario);
     String? fotoUrl = await _usuarioController.obtenerFotoPerfilUsuario(widget.idUsuario);
+
+    // Verificar y resetear lista de compra si es lunes
+    await _listaCompraController.verificarResetAutomatico(widget.idUsuario);
 
     setState(() {
       _idPareja = idPareja;
@@ -68,8 +76,63 @@ class _InicioPageState extends State<InicioPage> {
     });
   }
 
-  void _notificacionPrueba() {
-    NotificationService.scheduleTestNotification();
+  void _navegarAFitness() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FitnessPage(idUsuario: widget.idUsuario,),
+      ),
+    ).then((_) async {
+      await _cargarDatos(); // Recargar datos al volver
+    });
+  }
+
+  void _navegarASolicitudPareja() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SolicitudParejaPage(idUsuario: widget.idUsuario),
+      ),
+    ).then((_) async {
+      await _cargarDatos();
+    });
+  }
+
+  Future<void> _enviarNotificacionPrueba() async {
+    try {
+      print('📤 Enviando notificación de prueba...');
+
+      FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'memorii_channel',
+        'Memorii Notifications',
+        channelDescription: 'Notificaciones de la app Memorii',
+        importance: Importance.max,
+        priority: Priority.high,
+        showWhen: true,
+      );
+
+      const NotificationDetails notificationDetails = NotificationDetails(
+        android: androidDetails,
+      );
+
+      await flutterLocalNotificationsPlugin.show(
+        DateTime.now().millisecond,
+        '¡Notificación de prueba! 📱',
+        'Esta es una prueba local',
+        notificationDetails,
+      );
+
+      print('✅ Notificación local enviada');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('📤 Notificación enviada')),
+      );
+    } catch (e) {
+      print('❌ Error enviando notificación: $e');
+    }
   }
 
   // Widget para crear botones consistentes con el estilo de la app
@@ -212,7 +275,7 @@ class _InicioPageState extends State<InicioPage> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'Guarda y comparte tus recuerdos más especiales',
+                    'Guarda y comparte tus recuerdos más especiales junto a tu pareja',
                     style: TextStyle(
                       fontSize: 16,
                       color: Colors.grey.shade600,
@@ -272,66 +335,97 @@ class _InicioPageState extends State<InicioPage> {
 
             SizedBox(height: 20),
 
-            // Sección de botones del menú
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      child: Text(
-                        'Menú Principal',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
+            if (_idPareja == -1)
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: ElevatedButton(
+                  onPressed: () {
+                    _navegarASolicitudPareja();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.pinkAccent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
-
-                    // Botón del Calendario
-                    _buildMenuButton(
-                      title: 'Calendario',
-                      description: 'Ve y administra tus recuerdos por fechas',
-                      icon: Icons.calendar_today,
-                      onPressed: _navegarACalendario,
-                      backgroundColor: Colors.pinkAccent,
-                    ),
-
-                    _buildMenuButton(
-                      title: 'Vacaciones',
-                      description: 'Itinerario de nuestras super vacaciones',
-                      icon: Icons.beach_access,
-                      onPressed: _navegarAVacaciones,
-                      backgroundColor: Colors.pinkAccent,
-                    ),
-
-                    _buildMenuButton(
-                      title: 'Mandar notificacion',
-                      description: 'Prueba',
-                      icon: Icons.notification_add,
-                      onPressed: _notificacionPrueba,
-                      backgroundColor: Colors.pinkAccent,
-                    ),
-
-                    /*
-                    _buildMenuButton(
-                      title: 'Estadísticas',
-                      description: 'Ve estadísticas de tus recuerdos',
-                      icon: Icons.bar_chart,
-                      onPressed: () {
-                        // Navigator.push(...);
-                      },
-                      backgroundColor: Colors.teal,
-                    ),
-                    */
-
-                    SizedBox(height: 20),
-                  ],
+                    padding: EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                  ),
+                  child: Text('Solicitudes de pareja', style: TextStyle(color: Colors.white)),
                 ),
               ),
-            ),
+            if (_idPareja != -1)
+              // Sección de botones del menú
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        child: Text(
+                          'Menú Principal',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+
+                      // Botón del Calendario
+                      _buildMenuButton(
+                        title: 'Calendario',
+                        description: 'Ve y administra tus recuerdos por fechas',
+                        icon: Icons.calendar_today,
+                        onPressed: _navegarACalendario,
+                        backgroundColor: Colors.pinkAccent,
+                      ),
+
+                      _buildMenuButton(
+                        title: 'Vacaciones',
+                        description: 'Itinerario de nuestras super vacaciones',
+                        icon: Icons.beach_access,
+                        onPressed: _navegarAVacaciones,
+                        backgroundColor: Colors.pinkAccent,
+                      ),
+
+                      _buildMenuButton(
+                        title: 'Rutina Fit',
+                        description: 'Todo lo necesario para nuestra puesta en forma',
+                        icon: Icons.fitness_center_rounded,
+                        onPressed: _navegarAFitness,
+                        backgroundColor: Colors.pinkAccent,
+                      ),
+
+                      /*
+                      ElevatedButton.icon(
+                        onPressed: _enviarNotificacionPrueba,
+                        icon: Icon(Icons.notifications),
+                        label: Text('Probar Notificación'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.pink,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      */
+
+                      /*
+                      _buildMenuButton(
+                        title: 'Estadísticas',
+                        description: 'Ve estadísticas de tus recuerdos',
+                        icon: Icons.bar_chart,
+                        onPressed: () {
+                          // Navigator.push(...);
+                        },
+                        backgroundColor: Colors.teal,
+                      ),
+                      */
+
+                      SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
